@@ -7,12 +7,8 @@
   <meta name="theme-color" content="#0f1115">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
-    :root {
-      --bg:#0f1115; --card:#151923; --fg:#e8eaf0; --muted:#9aa3b2; --accent:#4aa3ff;
-      --ok:#2ecc71; --warn:#ffb020; --line:#2a3141; --input:#0c0f14;
-    }
-    html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);
-      font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,sans-serif}
+    :root { --bg:#0f1115; --card:#151923; --fg:#e8eaf0; --muted:#9aa3b2; --accent:#4aa3ff; --ok:#2ecc71; --warn:#ffb020; --line:#2a3141; --input:#0c0f14; }
+    html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,sans-serif}
     .wrap{max-width:520px;margin:12px auto 28px;padding:0 12px}
     .card{background:var(--card);border-radius:14px;padding:16px;box-shadow:0 10px 25px rgba(0,0,0,.35)}
     h1{margin:0 0 10px;font-size:20px}
@@ -21,11 +17,15 @@
     @media (min-width:520px){ .row{grid-template-columns:1fr 1fr} }
     .field{display:flex;flex-direction:column;gap:6px}
     label{font-size:12px;color:var(--muted)}
+    /* 👇 narrower inputs */
     input{
-      width:100%;padding:14px 12px;border-radius:12px;border:1px solid var(--line);
+      width:100%; max-width: 240px; /* mobile */
+      padding:14px 12px;border-radius:12px;border:1px solid var(--line);
       background:var(--input);color:var(--fg);font-size:16px;outline:none;
       -webkit-tap-highlight-color: transparent;
+      align-self:flex-start; /* keep left aligned in wide layouts */
     }
+    @media (min-width:520px){ input{ max-width:260px; } }
     input:focus{border-color:#394057;box-shadow:0 0 0 3px rgba(74,163,255,.15)}
     .hint{color:var(--muted);font-size:12px;margin-top:4px}
     .out{margin-top:14px;padding:12px;border-radius:12px;background:var(--input);border:1px solid var(--line)}
@@ -33,11 +33,9 @@
     .status{margin-top:10px;font-weight:600}
     .ok{color:var(--ok)} .warn{color:var(--warn)} .fine{color:var(--accent)}
     footer{text-align:center;color:var(--muted);font-size:12px;margin-top:12px}
-
-    /* Hide native spinners just in case (some Android skins show them) */
-    input::-webkit-outer-spin-button,
-    input::-webkit-inner-spin-button{ -webkit-appearance: none; margin: 0; }
-    input[type=number]{ -moz-appearance: textfield; }
+    /* Hide native spinners just in case */
+    input::-webkit-outer-spin-button,input::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
+    input[type=number]{ -moz-appearance:textfield; }
   </style>
 </head>
 <body>
@@ -105,7 +103,6 @@
     `;
   }
 
-  // Live updates while typing; normalize on blur
   ['o1','o2','stake'].forEach(id=>{
     const el = $(id);
     el.addEventListener('input', render, {passive:true});
