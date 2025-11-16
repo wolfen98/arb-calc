@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Exchange Arb Calculator</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1115">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg:#0f1115; --card:#151923; --fg:#e8eaf0; --muted:#9aa3b2; --accent:#4aa3ff;
+      --ok:#2ecc71; --warn:#ffb020; --line:#2a3141; --input:#0c0f14;
+    }
+    html,body{
+      margin:0;padding:0;background:var(--bg);color:var(--fg);
+      font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,sans-serif
+    }
+    .wrap{max-width:520px;margin:12px auto 28px;padding:0 12px}
+    .card{
+      background:var(--card);border-radius:14px;padding:16px;
+      box-shadow:0 10px 25px rgba(0,0,0,.35)
+    }
+    h1{margin:0 0 10px;font-size:20px}
+    .meta{color:var(--muted);font-size:13px;margin:-2px 0 8px}
+    .meta span.tag{
+      background:rgba(74,163,255,.12);border-radius:999px;padding:1px 8px;
+    }
+    .row{display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:12px}
+    @media (min-width:520px){ .row{grid-template-columns:1fr 1fr} }
+    .field{display:flex;flex-direction:column;gap:6px}
+    label{font-size:12px;color:var(--muted)}
+    input{
+      width:100%; max-width:240px;
+      padding:14px 12px;border-radius:12px;border:1px solid var(--line);
+      background:var(--input);color:var(--fg);font-size:16px;outline:none;
+      -webkit-tap-highlight-color:transparent;
+      align-self:flex-start;
+    }
+    @media (min-width:520px){ input{ max-width:260px; } }
+    input:focus{border-color:#394057;box-shadow:0 0 0 3px rgba(74,163,255,.15)}
+    .hint{color:var(--muted);font-size:12px;margin-top:4px}
+    .out{margin-top:14px;padding:12px;border-radius:12px;background:var(--input);border:1px solid var(--line)}
+    .kpi{display:flex;justify-content:space-between;margin-top:6px;color:var(--muted)}
+    .kpi strong{color:var(--fg)}
+    .status{margin-top:10px;font-weight:600}
+    .ok{color:var(--ok)} .warn{color:var(--warn)} .fine{color:var(--accent)}
+    footer{text-align:center;color:var(--muted);font-size:12px;margin-top:12px}
+    input::-webkit-outer-spin-button,input::-webkit-inner-spin-button{
+      -webkit-appearance:none;margin:0;
+    }
+    input[type=number]{ -moz-appearance:textfield; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>Exchange Arb Calculator</h1>
+    <div class="meta" id="meta"></div>
+    <div class="meta" id="meta2"></div>
+
+    <div class="row">
+      <div class="field">
+        <label>Bookmaker odds</label>
+        <input id="bo" type="text" inputmode="decimal" placeholder="e.g. 2.20" value="2.20"
+               autocomplete="off" autocapitalize="none" spellcheck="false">
+      </div>
+      <div class="field">
+        <label>Exchange lay odds</label>
+        <input id="eo" type="text" inputmode="decimal" placeholder="e.g. 2.30" value="2.30"
+               autocomplete="off" autocapitalize="none" spellcheck="false">
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label>Back stake at bookmaker (kr)</label>
+        <input id="stake" type="text" inputmode="decimal" placeholder="e.g. 5000" value="5000"
+               autocomplete="off" autocapitalize="none" spellcheck="false">
+      </div>
+      <div class="field">
+        <label>Exchange fee (%)</label>
+        <input id="fee" type="text" inputmode="decimal" placeholder="e.g. 2" value="2"
+               autocomplete="off" autocapitalize="none" spellcheck="false">
+        <div class="hint">Use the same commission as in your bot (e.g. 2 for 2%).</div>
+      </div>
+    </div>
+
+    <div class="field">
+      <div class="hint" id="mimHint"></div>
+    </div>
+
+    <div class="out" id="out"></div>
+  </div>
+  <footer>Runs locally in Telegram • no data sent</footer>
+</div>
+
+<script>
+  const tg = window.Telegram?.WebApp; try { tg?.expand(); } catch(e){}
+  const $ = id => document.getElementById(id);
+
+  const money = x =>
+    (Number.isFinite(x)?x:0).toLocaleString('sv-SE',{
+      minimumFractionDigits:2,
+      maximumFractionDigits:2
+    });
+
+  const clampMin = (x, min) => isFinite(x) ? Math.max(min, x) : min;
+
+  function parseDec(el, min){
+    const v = parseFloat((el.value || '').toString().replace(',', '.'));
+    return clampMin(v, min);
+  }
+
+  // Compute according to your Python logic:
+  // denom = ex_odds - fee; BAM = book_odds/denom; rating = BAM*(1-fee)*100
+  // Lay stake = backStake * BAM
+  // Profit (selection wins)   = backStake*(bo-1) - layStake*(eo-1)
+  // Profit (selection loses)  = layStake*(1-fee) - backStake
+  function compute(bo, eo, S, feePct){
+    const fee = feePct/100;
+    if(bo <= 1 || eo <= 1 || S <= 0 || fee < 0 || fee >= 1){
+      return {
+        layStake:0, profitWin:0, profitLose:0,
+        minProfit:0, maxProfit:0, rating:0, isArb:false
+      };
+    }
+    const denom = eo - fee;
+    if(denom <= 0){
+      return {
+        layStake:0, profitWin:0, profitLose:0,
+        minProfit:0, maxProfit:0, rating:0, isArb:false
+      };
+    }
+    const BAM = bo / denom;  // same as in Python
+    const layStake = S * BAM;
+
+    const profitWin  = S * (bo - 1) - layStake * (eo - 1);    // selection wins
+    const profitLose = layStake * (1 - fee) - S;             // selection loses
+
+    const minProfit = Math.min(profitWin, profitLose);
+    const maxProfit = Math.max(profitWin, profitLose);
+    const rating = BAM * (1 - fee) * 100;                    // same formula
+
+    const isArb = (profitWin > 0 && profitLose > 0);
+
+    return { layStake, profitWin, profitLose, minProfit, maxProfit, rating, isArb };
+  }
+
+  function render(){
+    const bo  = parseDec($('bo'), 1.01);
+    const eo  = parseDec($('eo'), 1.01);
+    const S   = parseDec($('stake'), 1);
+    const fee = parseDec($('fee'), 0);
+
+    const r   = compute(bo, eo, S, fee);
+    const status = r.isArb
+      ? '<span class="ok">✅ Arbitrage (both outcomes positive)</span>'
+      : '<span class="warn">⚠️ Not a risk-free arb</span>';
+
+    $('out').innerHTML = `
+      <div>Odds: Back <span class="fine">${bo.toFixed(3)}</span> / Lay <span class="fine">${eo.toFixed(3)}</span></div>
+      <div class="kpi"><span>Back stake (bookmaker)</span><strong>${money(S)} kr</strong></div>
+      <div class="kpi"><span>Lay stake (exchange)</span><strong>${money(r.layStake)} kr</strong></div>
+      <div class="kpi"><span>Profit if selection WINS</span><strong>${money(r.profitWin)} kr</strong></div>
+      <div class="kpi"><span>Profit if selection LOSES</span><strong>${money(r.profitLose)} kr</strong></div>
+      <div class="kpi"><span>Min / Max profit</span><strong>${money(r.minProfit)} kr / ${money(r.maxProfit)} kr</strong></div>
+      <div class="kpi"><span>Rating (from bot formula)</span><strong>${r.rating.toFixed(3)}%</strong></div>
+      <div class="status">${status}</div>
+    `;
+  }
+
+  ['bo','eo','stake','fee'].forEach(id=>{
+    const el = $(id);
+    el.addEventListener('input', render, {passive:true});
+    el.addEventListener('blur', ()=>{
+      const min = (id === 'stake') ? 1 : 0;
+      const v = parseDec(el, min);
+      if(id === 'stake'){
+        el.value = v.toFixed(0);
+      } else if(id === 'fee'){
+        el.value = v.toFixed(2);
+      } else {
+        el.value = v.toFixed(3);
+      }
+      render();
+    });
+  });
+
+  // --------- Prefill from query string ---------
+  const p    = new URL(location.href).searchParams;
+  const qsBo = p.get('bo');
+  const qsEo = p.get('eo');
+  const qsS  = p.get('S');
+  const qsFee = p.get('fee');
+  const evt  = p.get('evt');
+  const sel  = p.get('sel');
+  const book = p.get('book');
+  const exch = p.get('exch');
+  const mim  = p.get('mim');
+
+  if(qsBo) $('bo').value = qsBo;
+  if(qsEo) $('eo').value = qsEo;
+  if(qsS)  $('stake').value = qsS;
+  if(qsFee) $('fee').value = qsFee;
+
+  if(evt || sel){
+    $('meta').innerHTML = `
+      ${evt ? `<span>${evt}</span>` : ''}
+      ${evt && sel ? ' • ' : ''}
+      ${sel ? `<span class="tag">${sel}</span>` : ''}
+    `;
+  }
+
+  if(book || exch){
+    $('meta2').textContent = `${book ? 'Bookmaker: '+book : ''}${book && exch ? ' • ' : ''}${exch ? 'Exchange: '+exch : ''}`;
+  }
+
+  if(mim){
+    $('mimHint').textContent = `Money in market (from bot): ${mim}`;
+  }
+
+  render();
+</script>
+</body>
+</html>
