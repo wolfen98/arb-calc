@@ -114,36 +114,37 @@
   // Compute according to your Python logic:
   // denom = ex_odds - fee; BAM = book_odds/denom; rating = BAM*(1-fee)*100
   // Lay stake = backStake * BAM
-  // Profit (selection wins)   = backStake*(bo-1) - layStake*(eo-1)
-  // Profit (selection loses)  = layStake*(1-fee) - backStake
+  // Profit if selection wins   = S*(bo-1) - L*(eo-1)
+  // Profit if selection loses  = L*(1-fee) - S
+  // We show min(profitWin, profitLose) as the guaranteed profit.
   function compute(bo, eo, S, feePct){
     const fee = feePct/100;
     if(bo <= 1 || eo <= 1 || S <= 0 || fee < 0 || fee >= 1){
       return {
-        layStake:0, profitWin:0, profitLose:0,
-        minProfit:0, maxProfit:0, rating:0, isArb:false
+        layStake:0, profit:0,
+        ratingRaw:0, ratingOver:0, isArb:false
       };
     }
     const denom = eo - fee;
     if(denom <= 0){
       return {
-        layStake:0, profitWin:0, profitLose:0,
-        minProfit:0, maxProfit:0, rating:0, isArb:false
+        layStake:0, profit:0,
+        ratingRaw:0, ratingOver:0, isArb:false
       };
     }
-    const BAM = bo / denom;  // same as in Python
+    const BAM = bo / denom;        // same as in Python
     const layStake = S * BAM;
 
     const profitWin  = S * (bo - 1) - layStake * (eo - 1);    // selection wins
-    const profitLose = layStake * (1 - fee) - S;             // selection loses
+    const profitLose = layStake * (1 - fee) - S;              // selection loses
 
-    const minProfit = Math.min(profitWin, profitLose);
-    const maxProfit = Math.max(profitWin, profitLose);
-    const rating = BAM * (1 - fee) * 100;                    // same formula
+    const profit = Math.min(profitWin, profitLose);           // guaranteed (worst-case) profit
+    const ratingRaw = BAM * (1 - fee) * 100;                  // e.g. 101.818
+    const ratingOver = ratingRaw - 100;                       // e.g. 1.818
 
     const isArb = (profitWin > 0 && profitLose > 0);
 
-    return { layStake, profitWin, profitLose, minProfit, maxProfit, rating, isArb };
+    return { layStake, profit, ratingRaw, ratingOver, isArb };
   }
 
   function render(){
@@ -154,17 +155,15 @@
 
     const r   = compute(bo, eo, S, fee);
     const status = r.isArb
-      ? '<span class="ok">✅ Arbitrage (both outcomes positive)</span>'
+      ? '<span class="ok">✅ Arbitrage (risk-free)</span>'
       : '<span class="warn">⚠️ Not a risk-free arb</span>';
 
     $('out').innerHTML = `
       <div>Odds: Back <span class="fine">${bo.toFixed(3)}</span> / Lay <span class="fine">${eo.toFixed(3)}</span></div>
       <div class="kpi"><span>Back stake (bookmaker)</span><strong>${money(S)} kr</strong></div>
       <div class="kpi"><span>Lay stake (exchange)</span><strong>${money(r.layStake)} kr</strong></div>
-      <div class="kpi"><span>Profit if selection WINS</span><strong>${money(r.profitWin)} kr</strong></div>
-      <div class="kpi"><span>Profit if selection LOSES</span><strong>${money(r.profitLose)} kr</strong></div>
-      <div class="kpi"><span>Min / Max profit</span><strong>${money(r.minProfit)} kr / ${money(r.maxProfit)} kr</strong></div>
-      <div class="kpi"><span>Rating (from bot formula)</span><strong>${r.rating.toFixed(3)}%</strong></div>
+      <div class="kpi"><span>Guaranteed profit</span><strong>${money(r.profit)} kr</strong></div>
+      <div class="kpi"><span>Rating</span><strong>${r.ratingOver.toFixed(3)}%</strong></div>
       <div class="status">${status}</div>
     `;
   }
