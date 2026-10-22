@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Freebet Exchange Calculator</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1115">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg:#0f1115; --card:#151923; --fg:#e8eaf0; --muted:#9aa3b2; --accent:#4aa3ff;
+      --ok:#2ecc71; --warn:#ffb020; --line:#2a3141; --input:#0c0f14;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);
+      font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,sans-serif}
+    .wrap{max-width:520px;margin:12px auto 28px;padding:0 12px}
+    .card{background:var(--card);border-radius:14px;padding:16px;box-shadow:0 10px 25px rgba(0,0,0,.35)}
+    h1{margin:0 0 10px;font-size:20px}
+    .meta{color:var(--muted);font-size:13px;margin:-2px 0 8px;overflow-wrap:anywhere}
+    .row{display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:12px}
+    @media(min-width:520px){.row{grid-template-columns:1fr 1fr}}
+    .field{display:flex;flex-direction:column;gap:6px;min-width:0}
+    label{font-size:12px;color:var(--muted)}
+    input,select{width:100%;padding:14px 12px;border-radius:12px;border:1px solid var(--line);
+      background:var(--input);color:var(--fg);font-size:16px;outline:none;-webkit-tap-highlight-color:transparent}
+    input:focus,select:focus{border-color:#394057;box-shadow:0 0 0 3px rgba(74,163,255,.15)}
+    .hint{color:var(--muted);font-size:12px;margin-top:4px}
+    .out{margin-top:14px;padding:12px;border-radius:12px;background:var(--input);border:1px solid var(--line)}
+    .kpi{display:flex;justify-content:space-between;gap:14px;margin-top:8px;color:var(--muted)}
+    .kpi strong{color:var(--fg);text-align:right;flex-shrink:0}
+    .status{margin-top:12px;font-weight:600}
+    .ok{color:var(--ok)}.warn{color:var(--warn)}.fine{color:var(--accent)}
+    footer{text-align:center;color:var(--muted);font-size:12px;margin-top:12px}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>Freebet Exchange Calculator</h1>
+    <div class="meta" id="meta"></div>
+    <div class="meta" id="meta2"></div>
+    <div class="row">
+      <div class="field">
+        <label for="type">Freebet type</label>
+        <select id="type">
+          <option value="snr">SNR — stake not returned</option>
+          <option value="sr">SR — stake returned as cash</option>
+        </select>
+        <div class="hint" id="typeHint"></div>
+      </div>
+      <div class="field">
+        <label for="stake">Freebet amount (kr)</label>
+        <input id="stake" type="text" inputmode="decimal" placeholder="e.g. 100" value="100"
+          autocomplete="off" autocapitalize="none" spellcheck="false">
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label for="bo">Bookmaker odds</label>
+        <input id="bo" type="text" inputmode="decimal" placeholder="e.g. 5.00" value="5.00"
+          autocomplete="off" autocapitalize="none" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="eo">Exchange lay odds</label>
+        <input id="eo" type="text" inputmode="decimal" placeholder="e.g. 5.20" value="5.20"
+          autocomplete="off" autocapitalize="none" spellcheck="false">
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label for="fee">Exchange fee (%)</label>
+        <input id="fee" type="text" inputmode="decimal" placeholder="e.g. 2" value="2"
+          autocomplete="off" autocapitalize="none" spellcheck="false">
+        <div class="hint">Enter 2 for 2% commission.</div>
+      </div>
+      <div class="field">
+        <div class="hint" id="mimHint"></div>
+      </div>
+    </div>
+    <div class="out" id="out" aria-live="polite"></div>
+    <div class="hint">Back the selection at the bookmaker and lay the SAME selection at the exchange.
+      Figures assume both bets are fully matched and have compatible settlement rules.
+      Voids, pushes and bonus wagering requirements are excluded.</div>
+  </div>
+  <footer>Calculations run in your browser • no form data submitted</footer>
+</div>
+<script>
+  'use strict';
+  const tg = window.Telegram?.WebApp; try { tg?.expand(); } catch(e){}
+  const $ = id => document.getElementById(id);
+  const money = x => x.toLocaleString('sv-SE', {minimumFractionDigits:2, maximumFractionDigits:2});
+
+  function parseDec(el) {
+    const value = el.value.trim().replace(/[\s\u00a0\u202f]/g, '').replace(',', '.');
+    // Do not silently turn invalid entries or trailing text into valid stakes.
+    return /^(?:\d+(?:\.\d*)?|\.\d+)$/.test(value) ? Number(value) : NaN;
+  }
+
+  function compute(bo, eo, S, feePct, type) {
+    if (![bo, eo, S, feePct].every(Number.isFinite))
+      throw new Error('Enter a valid number in every field. Use a decimal point or comma.');
+    if (bo <= 1 || eo <= 1) throw new Error('Both decimal odds must be greater than 1.');
+    if (S <= 0) throw new Error('Freebet amount must be greater than zero.');
+    if (feePct < 0 || feePct >= 100) throw new Error('Commission must be at least 0 and less than 100%.');
+    if (Math.max(bo, eo, S) > 1e9) throw new Error('Odds and amount must be at most 1,000,000,000.');
+    if (!['snr', 'sr'].includes(type)) throw new Error('Choose SNR or SR.');
+    const fee = feePct / 100;
+    // The freebet itself is not a cash expense in either freebet mode.
+    // SNR winning receipt = S*(bo-1). SR cash receipt = S*bo.
+    const winningReceipt = S * (type === 'snr' ? bo - 1 : bo);
+    const exactLayStake = winningReceipt / (eo - fee);
+    const layStake = Math.round((exactLayStake + Number.EPSILON) * 100) / 100;
+    if (layStake <= 0) throw new Error('Lay stake rounds to zero; increase the freebet amount.');
+    const liability = layStake * (eo - 1);
+    const profitWin = winningReceipt - liability;
+    const profitLose = layStake * (1 - fee);
+    const profit = Math.min(profitWin, profitLose);
+    const conversion = profit / S * 100;
+    return {layStake, liability, profitWin, profitLose, profit, conversion};
+  }
+
+  function render() {
+    const type = $('type').value;
+    $('typeHint').textContent = type === 'snr'
+      ? 'Only the winnings are paid out; the freebet stake is not returned.'
+      : 'Assumes the stake and winnings are paid as withdrawable cash. Check the offer terms.';
+    try {
+      const bo = parseDec($('bo')), eo = parseDec($('eo'));
+      const S = parseDec($('stake')), fee = parseDec($('fee'));
+      const r = compute(bo, eo, S, fee, type);
+      const status = r.profit > 0
+        ? '<span class="ok">Positive profit in both win/loss outcomes</span>'
+        : '<span class="warn">No positive profit across both outcomes</span>';
+      // Only validated numeric values enter this markup. Query metadata uses textContent below.
+      $('out').innerHTML = `
+        <div>Odds: Back <span class="fine">${bo.toFixed(3)}</span> / Lay <span class="fine">${eo.toFixed(3)}</span></div>
+        <div class="kpi"><span>Freebet at bookmaker</span><strong>${money(S)} kr</strong></div>
+        <div class="kpi"><span>Lay stake at exchange</span><strong>${money(r.layStake)} kr</strong></div>
+        <div class="kpi"><span>Exchange liability / cash needed</span><strong>${money(r.liability)} kr</strong></div>
+        <div class="kpi"><span>Net profit if selection wins</span><strong>${money(r.profitWin)} kr</strong></div>
+        <div class="kpi"><span>Net profit if selection loses</span><strong>${money(r.profitLose)} kr</strong></div>
+        <div class="kpi"><span>Lowest profit of both outcomes</span><strong>${money(r.profit)} kr</strong></div>
+        <div class="kpi"><span>Freebet conversion</span><strong>${r.conversion.toFixed(2)}%</strong></div>
+        <div class="status">${status}</div>
+        <div class="hint">Liability is the cash reserved for the lay bet, not an extra stake on top of it.
+        Profits use a lay stake rounded to 0.01 kr. Exchange rounding may cause small differences.</div>`;
+    } catch (error) {
+      $('out').textContent = error.message;
+    }
+  }
+
+  ['bo', 'eo', 'stake', 'fee'].forEach(id => {
+    $(id).addEventListener('input', render, {passive:true});
+    $(id).addEventListener('blur', () => {
+      const value = parseDec($(id));
+      if (Number.isFinite(value)) $(id).value = String(value);
+      render();
+    });
+  });
+  $('type').addEventListener('change', render);
+
+  // Keep the same query names as the normal calculator. Add type=snr or type=sr.
+  const p = new URL(location.href).searchParams;
+  for (const [query, id] of [['bo','bo'], ['eo','eo'], ['S','stake'], ['fee','fee']]) {
+    if (p.has(query)) $(id).value = p.get(query);
+  }
+  const requestedType = (p.get('type') || 'snr').toLowerCase();
+  if (['snr', 'sr'].includes(requestedType)) $('type').value = requestedType;
+  $('meta').textContent = [p.get('evt'), p.get('sel')].filter(Boolean).join(' • ');
+  $('meta2').textContent = [p.get('book') ? 'Bookmaker: ' + p.get('book') : '',
+    p.get('exch') ? 'Exchange: ' + p.get('exch') : ''].filter(Boolean).join(' • ');
+  if (p.get('mim')) $('mimHint').textContent = 'Available amount reported by bot: ' + p.get('mim') +
+    '. Verify liquidity at your chosen lay odds before betting.';
+  render();
+</script>
+</body>
+</html>
